@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"flag"
 	"fmt"
 	"image"
@@ -12,21 +11,22 @@ import (
 
 	"time"
 
+	"github.com/AlexEidt/Vidio"
 	"github.com/nfnt/resize"
 	"golang.org/x/crypto/ssh/terminal"
 )
 
-func playAudio() {
-	cmd := exec.Command("/usr/bin/mpv", "--no-video", "videoplayback.mp4")
+func playAudio(file string) {
+	cmd := exec.Command("/usr/bin/mpv", "--no-video", file)
 	if err := cmd.Run(); err != nil {
 		return
 	}
 }
 
-func renderImages(image chan image.Image, buf *bufio.Writer) {
+func render(frameBuffer chan image.Image, buf *bufio.Writer) {
 	for {
 		now := time.Now().UnixMicro()
-		frame := <-image
+		frame := <-frameBuffer
 		bounds := frame.Bounds()
 		width := bounds.Dx()
 		height := bounds.Dy()
@@ -38,66 +38,69 @@ func renderImages(image chan image.Image, buf *bufio.Writer) {
 				buf.Write([]byte(" "))
 				buf.Write([]byte("\033[0m"))
 			}
+			buf.Flush()
 			buf.Write([]byte("\n"))
 		}
 
 		buf.WriteString(fmt.Sprintf("\nFrame Time: %.2fms", float64(time.Now().UnixMicro()-now)/1000))
-
 		buf.Write([]byte("\033[0;0H"))
-		buf.Flush()
 	}
+}
+
+func decodeFrame(video *vidio.Video, frameBuffer chan image.Image, decoding chan bool, th int) {
+	spf := 1.0 / float64(video.FPS())
+	ticker := time.NewTicker(time.Duration(spf * float64(time.Second)))
+
+	frame := image.NewRGBA(image.Rect(0, 0, video.Width(), video.Height()))
+	video.SetFrameBuffer(frame.Pix)
+
+	for video.Read() {
+		<-ticker.C
+
+		width, height, err := terminal.GetSize(th)
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+
+		frameBuffer <- resize.Resize(uint(width), uint(height-2), frame, resize.NearestNeighbor)
+	}
+	close(frameBuffer)
+	close(decoding)
 }
 
 func main() {
 	tFd := int(os.Stdout.Fd())
 
-	fpsPtr := flag.Float64("fps", 24.0, "frame render FPS")
+	flagPtr := flag.String("video", "", "video file to play")
 	flag.Parse()
 
-	fps := *fpsPtr
+	file := *flagPtr
 
-	d, err := os.ReadDir("./out")
+	if file == "" {
+		fmt.Println("video file not specified.")
+		return
+	}
+
+	video, err := vidio.NewVideo(file)
+
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
 
-	fc := len(d)
+	running := make(chan bool)
+	frameBuffer := make(chan image.Image)
 
-	rch := make(chan image.Image)
+	bufStdout := bufio.NewWriterSize(os.Stdout, 1920*20)
 
-	bufStdout := bufio.NewWriterSize(os.Stdout, 2*(800*600))
+	go render(frameBuffer, bufStdout)
+	go decodeFrame(video, frameBuffer, running, tFd)
 
-	go renderImages(rch, bufStdout)
-
-	spf := 1.0 / float64(fps)
-	ticker := time.NewTicker(time.Duration(spf * float64(time.Second)))
-
-	go playAudio()
-	for i := 0; i < fc; i++ {
-		<-ticker.C
-		dat, err := os.ReadFile(fmt.Sprintf("out/image-%d.jpg", i+1))
-
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-
-		width, height, err := terminal.GetSize(tFd)
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-
-		image, _, err := image.Decode(bytes.NewReader(dat))
-
-		if err != nil {
-			fmt.Println(err)
-			return
-		}
-
-		newImage := resize.Resize(uint(width), uint(height-2), image, resize.NearestNeighbor)
-		rch <- newImage
-	}
-
+	<-running
 }
