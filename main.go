@@ -32,6 +32,11 @@ func render(frameBuffer chan image.Image, buf *bufio.Writer) {
 		width := bounds.Dx()
 		height := bounds.Dy()
 
+		// Dynamically resize output buffer
+		if buf.Size() != width {
+			buf = bufio.NewWriterSize(buf, width)
+		}
+
 		for y := 0; y < height; y++ {
 			for x := 0; x < width; x++ {
 				r, g, b, _ := frame.At(x, y).RGBA()
@@ -44,6 +49,9 @@ func render(frameBuffer chan image.Image, buf *bufio.Writer) {
 		}
 
 		buf.WriteString(fmt.Sprintf("\nLast Frame Time: %.2fms", float64(time.Now().UnixMicro()-now)/1000))
+		buf.WriteString(" | ")
+		buf.WriteString(fmt.Sprintf("FPS: %.2f", 1000000/float64(time.Now().UnixMicro()-now)))
+
 		buf.Write([]byte("\033[0;0H"))
 	}
 }
@@ -98,7 +106,7 @@ func main() {
 	running := make(chan bool)
 	frameBuffer := make(chan image.Image)
 
-	bufStdout := bufio.NewWriterSize(os.Stdout, 1920*4)
+	bufStdout := bufio.NewWriterSize(os.Stdout, 1920)
 
 	// Start render thread
 	go render(frameBuffer, bufStdout)
