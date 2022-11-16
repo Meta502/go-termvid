@@ -8,9 +8,10 @@ import (
 	_ "image/jpeg"
 	"os"
 	"os/exec"
-
 	"time"
+)
 
+import (
 	"github.com/AlexEidt/Vidio"
 	"github.com/nfnt/resize"
 	"golang.org/x/crypto/ssh/terminal"
@@ -42,7 +43,7 @@ func render(frameBuffer chan image.Image, buf *bufio.Writer) {
 			buf.Write([]byte("\n"))
 		}
 
-		buf.WriteString(fmt.Sprintf("\nFrame Time: %.2fms", float64(time.Now().UnixMicro()-now)/1000))
+		buf.WriteString(fmt.Sprintf("\nLast Frame Time: %.2fms", float64(time.Now().UnixMicro()-now)/1000))
 		buf.Write([]byte("\033[0;0H"))
 	}
 }
@@ -68,7 +69,7 @@ func decodeFrame(video *vidio.Video, frameBuffer chan image.Image, decoding chan
 			return
 		}
 
-		frameBuffer <- resize.Resize(uint(width), uint(height-2), frame, resize.NearestNeighbor)
+		frameBuffer <- resize.Resize(uint(width), uint(height-2), frame, resize.Bicubic)
 	}
 	close(frameBuffer)
 	close(decoding)
@@ -97,10 +98,15 @@ func main() {
 	running := make(chan bool)
 	frameBuffer := make(chan image.Image)
 
-	bufStdout := bufio.NewWriterSize(os.Stdout, 1920*20)
+	bufStdout := bufio.NewWriterSize(os.Stdout, 1920*4)
 
+	// Start render thread
 	go render(frameBuffer, bufStdout)
-	go decodeFrame(video, frameBuffer, running, tFd)
 
+	// Start frame and audio output threads
+	go decodeFrame(video, frameBuffer, running, tFd)
+	go playAudio(file)
+
+	// Halt until channel is closed
 	<-running
 }
